@@ -4,8 +4,11 @@ services:
     restart: unless-stopped
     ports:
       - "5678:5678"
+    environment:
+      - N8N_RESTRICT_FILE_ACCESS_TO=/data/leadhound
     volumes:
       - n8n_data:/home/node/.n8n
+      - /home/wrath/Documents/Github-Projects/leadhound/output:/data/leadhound
 
 volumes:
   n8n_data:
