@@ -1,0 +1,500 @@
+{
+  "name": "Switchyard",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        -480
+      ],
+      "id": "97ddd3a4-3b7c-4276-9aee-523af2ec3479",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        128,
+        -480
+      ],
+      "id": "0dfa5585-4421-4ae5-a7d8-7b30d77f7122",
+      "name": "Parse Leads CSV"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cleanedItems = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  // Trim whitespace off every text field\n  for (const key in data) {\n    if (typeof data[key] === 'string') {\n      data[key] = data[key].trim();\n    }\n  }\n\n  // No name = unusable row, drop it\n  if (!data.name) continue;\n\n  const digits = (data.phone || '').replace(/\\D/g, '');\n  const reasons = [];\n\n  if (!digits) {\n    data.phone = '';\n    reasons.push('missing phone');\n  } else if (digits.startsWith('00977')) {\n    data.phone = '+977-' + digits.slice(5);\n  } else if (digits.startsWith('977') && digits.length >= 12) {\n    data.phone = '+977-' + digits.slice(3);\n  } else if (digits.startsWith('0')) {\n    data.phone = '+977-' + digits.slice(1);\n  } else if (digits.length === 10 && digits.startsWith('9')) {\n    data.phone = '+977-' + digits;\n  } else {\n    data.phone = digits;\n    reasons.push('phone format unclear');\n  }\n\n  data.needs_review = reasons.length > 0;\n  data.review_note = reasons.join(', ');\n\n  cleanedItems.push(item);\n}\n\nreturn cleanedItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        -16
+      ],
+      "id": "58bdb56c-9c46-4b70-8f39-7bd39bcb72fc",
+      "name": "Clean and Flag Leads"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        512,
+        -480
+      ],
+      "id": "b0feabde-c117-4770-b484-434baec8ec05",
+      "name": "Process Each Lead"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "appVqUcjFDKTDdE7O",
+          "mode": "list",
+          "cachedResultName": "Switchyard Leads",
+          "cachedResultUrl": "https://airtable.com/appVqUcjFDKTDdE7O"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbl3zW6Vpge54COdb",
+          "mode": "list",
+          "cachedResultName": "Table 1",
+          "cachedResultUrl": "https://airtable.com/appVqUcjFDKTDdE7O/tbl3zW6Vpge54COdb"
+        },
+        "filterByFormula": "=AND({name} = \"{{ String($json.name).replace(/\"/g, '\\\\\"') }}\", {address} = \"{{ String($json.address).replace(/\"/g, '\\\\\"') }}\")",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        752,
+        -272
+      ],
+      "id": "468c0240-32da-4a55-87b5-3e979fce2904",
+      "name": "Check for Duplicates",
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "IZEfNioZlVuBQ83Q",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0cd12981-f3a2-4ed4-8c93-22936121832d",
+              "leftValue": "={{ $json.id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        992,
+        -64
+      ],
+      "id": "a2f7f43e-74a8-4fd7-b51b-303f228da934",
+      "name": "Is Duplicate?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Process Each Lead').first().json;\n\nlet score = 0;\nif (String(lead.verified).toLowerCase() === 'true') score += 2;\nif (parseFloat(lead.rating) >= 4) score += 1;\nif (lead.phone) score += 1;\n\n// \"+9\" -> 9, \"2017\" -> 2017, \"\" -> null\nconst num = v => {\n  const cleaned = String(v ?? '').replace(/[^0-9.\\-]/g, '');\n  if (cleaned === '') return null;\n  const n = Number(cleaned);\n  return isNaN(n) ? null : n;\n};\n\nconst record = {\n  company_id: lead.company_id,\n  name: lead.name,\n  profile_url: lead.profile_url,\n  address: lead.address,\n  tagline: lead.tagline,\n  phone: lead.phone,\n  established_year: num(lead.established_year),\n  years_with_us: num(lead.years_with_us),\n  rating: num(lead.rating),\n  review_count: num(lead.review_count),\n  source_url: lead.source_url,\n  Score: score,\n  'Dedup Status': 'New',\n  'Needs Review': lead.needs_review === true,\n  'Review Note': lead.review_note,\n  'Date Added': new Date().toISOString(),\n};\n\nfor (const k in record) {\n  if (record[k] === null || record[k] === '' || record[k] === undefined) delete record[k];\n}\n\nreturn [{ json: record }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        96
+      ],
+      "id": "f0281082-27ca-49fe-9494-a3d41fd941ac",
+      "name": "Score New Lead"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appVqUcjFDKTDdE7O",
+          "mode": "list",
+          "cachedResultName": "Switchyard Leads",
+          "cachedResultUrl": "https://airtable.com/appVqUcjFDKTDdE7O"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbl3zW6Vpge54COdb",
+          "mode": "list",
+          "cachedResultName": "Table 1",
+          "cachedResultUrl": "https://airtable.com/appVqUcjFDKTDdE7O/tbl3zW6Vpge54COdb"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company_id",
+              "displayName": "company_id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "profile_url",
+              "displayName": "profile_url",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "address",
+              "displayName": "address",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "tagline",
+              "displayName": "tagline",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "established_year",
+              "displayName": "established_year",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "years_with_us",
+              "displayName": "years_with_us",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "review_count",
+              "displayName": "review_count",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "source_url",
+              "displayName": "source_url",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "scraped_at",
+              "displayName": "scraped_at",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Dedup Status",
+              "displayName": "Dedup Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "New",
+                  "value": "New"
+                },
+                {
+                  "name": "Duplicate",
+                  "value": "Duplicate"
+                },
+                {
+                  "name": "",
+                  "value": ""
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Date Added",
+              "displayName": "Date Added",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        1424,
+        272
+      ],
+      "id": "af1c8612-211c-4bc9-9616-0a38db7ac148",
+      "name": "Add Lead to Airtable",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "IZEfNioZlVuBQ83Q",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/leadhound/leads.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        -32
+      ],
+      "id": "aa8d0acf-2b01-4bc0-b8cc-5cf7511faf80",
+      "name": "Read Leads CSV From Disk"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Read Leads CSV From Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Leads CSV": {
+      "main": [
+        [
+          {
+            "node": "Clean and Flag Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean and Flag Leads": {
+      "main": [
+        [
+          {
+            "node": "Process Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check for Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Process Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Score New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score New Lead": {
+      "main": [
+        [
+          {
+            "node": "Add Lead to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Lead to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Process Each Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Leads CSV From Disk": {
+      "main": [
+        [
+          {
+            "node": "Parse Leads CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "937d8bd7-3a74-4164-8180-9e7a8ac24df1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dfc1a1efd8100ae8e18bef310efdd8ff7b97467ec21798097c0772efd8a2e743"
+  },
+  "nodeGroups": [],
+  "id": "Kvgyqy1wOUKqLGoU",
+  "tags": []
+}
