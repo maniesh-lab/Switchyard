@@ -32,6 +32,9 @@ record.
   scrape (`00977` international prefix, `977` country code without leading
   zeros, domestic trunk `0`-prefix, bare 10-digit mobile) — anything else is
   preserved as-is rather than guessed wrong
+- Shorthand double numbers are split, not glued together — a listing like
+  `977-1-4416941/43` becomes `+977-14416941`, with the alternate
+  `+977-14416943` recorded in `Review Note`
 - Ambiguous rows are **flagged, not dropped** — a missing or unrecognized
   phone format sets `Needs Review` + a human-readable `Review Note`, so bad
   data surfaces in Airtable instead of silently failing or vanishing
@@ -62,7 +65,6 @@ Switchyard/
 │   ├── run1-all-new.png            # first run: all leads new
 │   └── run2-all-duplicate.png      # second run: all leads skipped
 ├── docker-compose.yml               # self-hosted n8n instance
-├── .gitignore
 ├── LICENSE
 └── README.md
 ```
@@ -81,7 +83,8 @@ intentionally not stored in this repo — see [Setup](#how-to-run).
 3. **Parse** — `Parse Leads CSV` (Extract From File, CSV mode) converts the
    binary into one n8n item per row
 4. **Clean & Flag** — a Code node trims whitespace on every field, normalizes
-   phone numbers, drops rows with no `name`, and flags rows with a missing or
+   phone numbers (splitting `/` shorthand into a main and an alternate
+   number), drops rows with no `name`, and flags rows with a missing or
    unrecognized phone format via `needs_review` / `review_note`
 5. **Loop** — `Process Each Lead` (Split In Batches) processes leads one at a
    time, keeping the per-lead Airtable calls sequential and rate-limit-safe
@@ -190,12 +193,13 @@ Lands in Airtable as:
 
 | Field | Value |
 |---|---|
-| phone | `+977-1441694143` |
+| phone | `+977-14416941` |
 | established_year | `2017` |
 | years_with_us | `9` |
 | Score | `4` (verified +2, rating ≥ 4 +1, has phone +1) |
 | Dedup Status | `New` |
 | Needs Review | unchecked |
+| Review Note | `alternate number: +977-14416943` |
 
 The identity and contact fields, as they land after cleaning:
 
