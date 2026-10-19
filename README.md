@@ -10,7 +10,7 @@ Built as the second project in a lead-gen automation pipeline (scraper → n8n
 routing → lead scoring → CRM hookup) — this is the routing, scoring, and CRM
 hookup stage.
 
-![Full workflow canvas](Screenshots/workflow-canvas.png)
+![Full workflow canvas](screenshots/workflow-canvas.png)
 
 ---
 
@@ -58,7 +58,7 @@ Switchyard/
 │
 ├── workflows/
 │   └── Switchyard.json             # exported n8n workflow
-├── Screenshots/
+├── screenshots/
 │   ├── workflow-canvas.png         # full node graph
 │   ├── airtable-left-columns.png   # name, address, phone, etc.
 │   ├── airtable-right-columns.png  # Score, Dedup Status, Needs Review, etc.
@@ -203,12 +203,12 @@ Lands in Airtable as:
 
 The identity and contact fields, as they land after cleaning:
 
-![Airtable left columns — identity and contact fields](Screenshots/airtable-left-columns.png)
+![Airtable left columns — identity and contact fields](screenshots/airtable-left-columns.png)
 
 The computed fields — score, dedup status, and the review flag catching a
 row with an unrecognized phone format:
 
-![Airtable right columns — score, dedup status, and review flag](Screenshots/airtable-right-columns.png)
+![Airtable right columns — score, dedup status, and review flag](screenshots/airtable-right-columns.png)
 
 ---
 
@@ -220,14 +220,14 @@ records on the second pass. Tested against the full 142-row dataset:
 **Run 1** — every lead is new, so all 142 items flow through the `false`
 (not-a-duplicate) branch into scoring and creation:
 
-![First run — all 142 leads flow through the false branch and get created](Screenshots/run1-all-new.png)
+![First run — all 142 leads flow through the false branch and get created](screenshots/run1-all-new.png)
 
 **Run 2** — same CSV, run again immediately after. Every lead now matches an
 existing `name` + `address` pair in Airtable, so all 142 items flow through
 the `true` (duplicate) branch straight back to the loop. `Score New Lead`
 and `Add Lead to Airtable` process zero items:
 
-![Second run — all 142 leads flow through the true branch and are skipped](Screenshots/run2-all-duplicate.png)
+![Second run — all 142 leads flow through the true branch and are skipped](screenshots/run2-all-duplicate.png)
 
 ---
 
