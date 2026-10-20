@@ -168,7 +168,7 @@ Click **Execute workflow**.
 | Dedup Status | Single select (`New`; duplicates are skipped, so only `New` is written) |
 | Needs Review | Checkbox |
 | Review Note | Single line text |
-| Date Added | Date, with time |
+| Date Added | Date |
 
 > **Note:** leadhound's own `scraped_at` value (when the lead was originally
 > scraped) is not currently carried through into Airtable. The `scraped_at`
