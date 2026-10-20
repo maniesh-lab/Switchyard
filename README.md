@@ -1,14 +1,13 @@
 # Switchyard
 
-An n8n workflow that ingests [leadhound](https://github.com/maniesh-lab/leadhound)'s
-scraped lead CSV, cleans and normalizes it, deduplicates it against an
-Airtable base, scores each lead, and writes new leads in — built to be safely
-rerunnable against the same data without producing duplicates, not a one-off
-import script.
+An n8n workflow that reads [leadhound](https://github.com/maniesh-lab/leadhound)'s
+scraped leads CSV, cleans the phone numbers and other fields, skips leads that
+are already in Airtable (same name and address), scores the new ones and adds
+them. It's safe to rerun: a second run on the same file adds nothing.
 
-Built as the second project in a lead-gen automation pipeline (scraper → n8n
-routing → lead scoring → CRM hookup) — this is the routing, scoring, and CRM
-hookup stage.
+It's the second stage of my lead-gen pipeline: leadhound scrapes the leads,
+Switchyard cleans, dedupes, scores and stores them in Airtable, and an AI
+scoring step is planned next.
 
 ![Full workflow canvas](screenshots/workflow-canvas.png)
 
@@ -48,6 +47,7 @@ record.
 - Transparent lead scoring (`+2` verified, `+1` rating ≥ 4, `+1` has phone)
   computed per lead before insert
 - Typecast enabled on the Airtable write node as a fallback safety net
+- The Airtable write retries on failure, so one dropped request doesn't lose a lead
 
 ---
 
@@ -165,7 +165,7 @@ Click **Execute workflow**.
 | source_url | Single line text |
 | scraped_at | Created time (Airtable auto-field — not written by n8n; see note below) |
 | Score | Number (integer) |
-| Dedup Status | Single select (`New`, `Duplicate`) |
+| Dedup Status | Single select (`New`; duplicates are skipped, so only `New` is written) |
 | Needs Review | Checkbox |
 | Review Note | Single line text |
 | Date Added | Date, with time |
@@ -243,8 +243,6 @@ and `Add Lead to Airtable` process zero items:
 ---
 
 ## Known Limitations
-
-Listed deliberately, not hidden:
 
 - **No scheduling or webhook trigger.** Runs are started manually via
   "Execute workflow"; not yet wired to fire automatically when leadhound
