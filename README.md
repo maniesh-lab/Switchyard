@@ -1,26 +1,15 @@
 # Switchyard
 
 An n8n workflow that reads [leadhound](https://github.com/maniesh-lab/leadhound)'s
-scraped leads CSV, cleans the phone numbers and other fields, skips leads that
-are already in Airtable (same name and address), scores the new ones and adds
-them. It's safe to rerun: a second run on the same file adds nothing.
+scraped leads CSV (`leads.csv`), puts every phone number into one format, turns
+messy number fields like `"+9"` into real numbers, skips leads that are already
+in Airtable (same name and address), scores the new ones and adds them. It's safe to rerun: a second run on the same file adds nothing.
 
 It's the second stage of my lead-gen pipeline: leadhound scrapes the leads,
 Switchyard cleans, dedupes, scores and stores them in Airtable, and an AI
 scoring step is planned next.
 
 ![Full workflow canvas](screenshots/workflow-canvas.png)
-
----
-
-## What it does
-
-Takes `leads.csv`, the output of leadhound's real estate agent scraper, and
-turns it into a deduplicated, scored, CRM-ready Airtable table. For each row,
-it normalizes the phone number into a single consistent format, coerces
-messy numeric fields, checks Airtable for an existing lead at the same name
-and address, skips it if found, and otherwise scores and inserts it as a new
-record.
 
 ---
 
@@ -242,6 +231,15 @@ and `Add Lead to Airtable` process zero items:
 
 ---
 
+## Use Case
+
+The middle stage of a lead-gen pipeline: takes leadhound's raw scraped CSV
+and turns it into a deduplicated, scored, CRM-ready Airtable table — ready
+for outreach or a follow-up automation, without manual copy-pasting or
+duplicate-checking.
+
+---
+
 ## Known Limitations
 
 - **No scheduling or webhook trigger.** Runs are started manually via
@@ -278,15 +276,6 @@ and `Add Lead to Airtable` process zero items:
   leadhound's already-scraped, `robots.txt`-respecting output
 - Airtable writes only ever add new records; nothing in this workflow
   deletes or overwrites existing Airtable data
-
----
-
-## Use Case
-
-The middle stage of a lead-gen pipeline: takes leadhound's raw scraped CSV
-and turns it into a deduplicated, scored, CRM-ready Airtable table — ready
-for outreach or a follow-up automation, without manual copy-pasting or
-duplicate-checking.
 
 ---
 
