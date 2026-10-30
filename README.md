@@ -46,7 +46,8 @@ scoring step is planned next.
 Switchyard/
 │
 ├── workflows/
-│   └── Switchyard.json             # exported n8n workflow
+│   ├── Switchyard.json             # exported n8n workflow
+│   └── leadgate.json               # starts leadgate runs, receives their results
 ├── screenshots/
 │   ├── workflow-canvas.png         # full node graph
 │   ├── airtable-left-columns.png   # name, address, phone, etc.
@@ -220,6 +221,37 @@ and `Add Lead to Airtable` process zero items:
 
 ---
 
+## leadgate workflow
+
+`workflows/leadgate.json` connects this n8n to
+[leadgate](https://github.com/maniesh-lab/leadgate), which finds and scores
+leads with agents and has a human approve each one. n8n only starts runs and
+receives results; leadgate itself writes approved leads to Airtable and posts
+to Discord.
+
+- **Run now** (or **Every Monday 09:00**, off by default) → **What to look
+  for** (niche, location, callback URL) → **Start a leadgate run** posts to
+  `http://leadgate-api:8000/api/webhooks/n8n/runs`
+- When the run is done (after a reviewer has decided every lead), leadgate
+  posts a summary to **Run results from leadgate**
+  (`/webhook/leadgate-results`) and **Summarize the run** counts what went
+  where
+
+**Setup**
+1. Start leadgate first (`docker compose up -d` in its repo). It creates the
+   `leadnet` Docker network this compose file joins. Without leadgate, run
+   `docker network create leadnet` once.
+2. `docker compose up -d` here.
+3. Create a **Header Auth** credential named `leadgate webhook secret`:
+   Name `X-Webhook-Secret`, Value = `N8N_WEBHOOK_SECRET` from leadgate's
+   `.env`. Both nodes use it: n8n sends it to leadgate, and checks it on the
+   results leadgate sends back.
+4. Import `workflows/leadgate.json`, pick that credential on both nodes if
+   n8n asks, then publish the workflow (the results webhook only listens
+   when it's published).
+
+---
+
 ## Tech Stack
 
 | Tool | Purpose |
@@ -242,7 +274,7 @@ duplicate-checking.
 
 ## Known Limitations
 
-- **No scheduling or webhook trigger.** Runs are started manually via
+- **No scheduling or webhook trigger (the CSV workflow).** Runs are started manually via
   "Execute workflow"; not yet wired to fire automatically when leadhound
   produces a new CSV.
 - **Duplicates are skipped, not refreshed.** If a lead's data changes

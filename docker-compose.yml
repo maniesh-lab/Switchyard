@@ -9,6 +9,15 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
       - /home/wrath/Documents/Github-Projects/leadhound/output:/data/leadhound
+    # leadnet: talk to leadgate (http://leadgate-api:8000), and leadgate posts run
+    # results back to http://n8n:5678/webhook/leadgate-results.
+    networks: [default, leadnet]
 
 volumes:
   n8n_data:
+
+networks:
+  default:
+  # Made by leadgate's `docker compose up` (or once by hand: docker network create leadnet).
+  leadnet:
+    external: true
