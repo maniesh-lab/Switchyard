@@ -3,7 +3,8 @@ services:
     image: docker.n8n.io/n8nio/n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      # localhost only: leadgate reaches n8n over leadnet, not this port.
+      - "127.0.0.1:5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
     # leadnet: talk to leadgate (http://leadgate-api:8000), and leadgate posts run
