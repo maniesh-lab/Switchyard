@@ -1,316 +1,108 @@
 # Switchyard
 
-An n8n workflow that reads [leadhound](https://github.com/maniesh-lab/leadhound)'s
-scraped leads CSV (`leads.csv`), puts every phone number into one format, turns
-messy number fields like `"+9"` into real numbers, skips leads that are already
-in Airtable (same name and address), scores the new ones and adds them. It's safe to rerun: a second run on the same file adds nothing.
+Switchyard is my self-hosted n8n, and the automation layer for [leadgate](https://github.com/maniesh-lab/leadgate). leadgate finds local businesses, scores them with agents, and lets nothing reach the CRM until a person approves it. Switchyard starts those runs, on demand or every Monday, and gets the results back when a person has decided every lead.
 
-It's the second stage of my lead-gen pipeline: leadhound scrapes the leads,
-Switchyard cleans, dedupes, scores and stores them in Airtable, and an AI
-scoring step is planned next.
+n8n only starts runs and receives results. leadgate writes approved leads to Airtable and posts them to Discord itself, so nothing is written twice.
 
-![Full workflow canvas](screenshots/workflow-canvas.png)
+## How it works
 
----
-
-## Features
-
-- CSV → structured n8n items via `Extract From File`, not manual parsing
-- Phone number normalization across four real-world formats found in the raw
-  scrape (`00977` international prefix, `977` country code without leading
-  zeros, domestic trunk `0`-prefix, bare 10-digit mobile) — anything else is
-  preserved as-is rather than guessed wrong
-- Shorthand double numbers are split, not glued together — a listing like
-  `977-1-4416941/43` becomes `+977-14416941`, with the alternate
-  `+977-14416943` recorded in `Review Note`
-- Ambiguous rows are **flagged, not dropped** — a missing or unrecognized
-  phone format sets `Needs Review` + a human-readable `Review Note`, so bad
-  data surfaces in Airtable instead of silently failing or vanishing
-- Numeric fields (`established_year`, `years_with_us`, `rating`,
-  `review_count`) are coerced from messy scraped text (e.g. `"+9"` → `9`)
-  before being sent to Airtable, so type mismatches don't break the run
-- Duplicate detection matches on **name + address**, not name alone —
-  avoids incorrectly merging two branches of the same company
-- Idempotent by design — rerunning against an unchanged CSV creates zero new
-  records; verified by running the full 142-row dataset twice in a row
-- Transparent lead scoring (`+2` verified, `+1` rating ≥ 4, `+1` has phone)
-  computed per lead before insert
-- Typecast enabled on the Airtable write node as a fallback safety net
-- The Airtable write retries on failure, so one dropped request doesn't lose a lead
-
----
-
-## Project Structure
-
-```
-Switchyard/
-│
-├── workflows/
-│   ├── Switchyard.json             # exported n8n workflow
-│   └── leadgate.json               # starts leadgate runs, receives their results
-├── screenshots/
-│   ├── workflow-canvas.png         # full node graph
-│   ├── airtable-left-columns.png   # name, address, phone, etc.
-│   ├── airtable-right-columns.png  # Score, Dedup Status, Needs Review, etc.
-│   ├── run1-all-new.png            # first run: all leads new
-│   └── run2-all-duplicate.png      # second run: all leads skipped
-├── docker-compose.yml               # self-hosted n8n instance
-├── LICENSE
-└── README.md
+```mermaid
+flowchart LR
+  T["Run now / Every Monday 09:00"] --> S["What to look for<br/>(niche, location)"]
+  S -->|"POST /api/webhooks/n8n/runs<br/>X-Webhook-Secret"| API["leadgate API"]
+  API --> W["leadgate worker:<br/>find, read sites, score"]
+  W --> Q["Approval queue"]
+  Q -->|"a person decides every lead"| W
+  W -->|"Airtable + Discord"| OUT["CRM and channels"]
+  W -->|"POST /webhook/leadgate-results<br/>X-Webhook-Secret"| R["Run results from leadgate"]
+  R --> SUM["Summarize the run"]
 ```
 
-Credentials, the Airtable Personal Access Token, and the CSV input path are
-intentionally not stored in this repo — see [Setup](#how-to-run).
+The workflow is [workflows/leadgate.json](workflows/leadgate.json). It has six nodes:
 
----
+- **Run now** starts a run by hand. **Every Monday 09:00** does it on a schedule; it's off until you turn it on.
+- **What to look for** sets the niche (`dentist`), the location (`Austin, TX`) and where leadgate sends the results.
+- **Start a leadgate run** posts that to leadgate. leadgate uses the newest open campaign with the same niche and location, or makes one, and answers with the run's id. The run then waits in leadgate's approval queue.
+- **Run results from leadgate** is a webhook. When a person has decided every lead, leadgate posts the run's summary here.
+- **Summarize the run** turns the summary into one line: how many leads, how many approved, escalated and rejected, and which ones went to the CRM.
 
-## How It Works
+Both directions use the same shared secret in the `X-Webhook-Secret` header.
 
-1. **Trigger** — manual trigger (`When clicking 'Execute workflow'`); no
-   schedule or webhook yet (see Limitations)
-2. **Read** — `Read Leads CSV From Disk` reads leadhound's output file from
-   disk as binary
-3. **Parse** — `Parse Leads CSV` (Extract From File, CSV mode) converts the
-   binary into one n8n item per row
-4. **Clean & Flag** — a Code node trims whitespace on every field, normalizes
-   phone numbers (splitting `/` shorthand into a main and an alternate
-   number), drops rows with no `name`, and flags rows with a missing or
-   unrecognized phone format via `needs_review` / `review_note`
-5. **Loop** — `Process Each Lead` (Split In Batches) processes leads one at a
-   time, keeping the per-lead Airtable calls sequential and rate-limit-safe
-6. **Dedup check** — `Check for Duplicates` searches Airtable with a filter
-   formula matching both `name` and `address`
-7. **Branch** — `Is Duplicate?` routes a match straight back to the loop
-   (skip); no match continues on
-8. **Score** — `Score New Lead` computes the lead's score, maps scraped
-   fields onto Airtable's exact column names, coerces numeric fields, and
-   drops any empty values so Airtable doesn't reject blanks
-9. **Write** — `Add Lead to Airtable` creates the record, Typecast on as a
-   fallback
-10. Loop continues until every lead has been checked and, if new, written
+## Quick start (Docker)
 
----
+You need Docker with the compose plugin, and leadgate running on the same machine.
 
-## How to Run
+**1. Start leadgate.** Follow its [quick start](https://github.com/maniesh-lab/leadgate#quick-start-docker), and set `N8N_WEBHOOK_SECRET` in its `.env` (make one with `openssl rand -hex 32`). Its `docker compose up` creates the `leadnet` network that both projects share. To start Switchyard without leadgate, create the network once: `docker network create leadnet`.
 
-**1. Clone the repo**
+**2. Start n8n.**
+
 ```bash
 git clone https://github.com/maniesh-lab/Switchyard
+```
+
+```bash
 cd Switchyard
 ```
 
-**2. Start n8n**
 ```bash
 docker compose up -d
 ```
-n8n will be available at `http://localhost:5678`.
 
-**3. Set up Airtable**
-- Create a base (e.g. "Switchyard Leads") with a table matching the schema
-  below
-- Generate a Personal Access Token from Airtable's developer settings
+n8n is at http://localhost:5678. Create the owner account on the first visit.
 
-**4. Connect the credential**
-In n8n, add an Airtable credential using that token.
+**3. Add the credential.** In n8n, create a **Header Auth** credential named `leadgate webhook secret`: Name `X-Webhook-Secret`, Value the same `N8N_WEBHOOK_SECRET` as in leadgate's `.env`.
 
-**5. Import the workflow**
-Workflows → Import from File → `workflows/Switchyard.json`
+**4. Import the workflow.** Workflows → Import from File → `workflows/leadgate.json`. If n8n asks, pick the credential on **Start a leadgate run** and **Run results from leadgate**.
 
-**6. Point it at your CSV**
-`docker-compose.yml` bind-mounts a specific local folder into the container
-and whitelists it via `N8N_RESTRICT_FILE_ACCESS_TO` (n8n blocks filesystem
-access to any path not explicitly allowed). Edit the `volumes:` line to
-point at wherever your leadhound output actually lives on your machine,
-update `N8N_RESTRICT_FILE_ACCESS_TO` to match the container-side path, then
-restart the stack:
-```bash
-docker compose down
-docker compose up -d
-```
-Finally, open `Read Leads CSV From Disk` in n8n and set `fileSelector` to
-that same container-side path (e.g. `/data/leadhound/leads.csv`).
+**5. Publish it.** The results webhook only listens while the workflow is published.
 
-**7. Re-select your Base/Table**
-Open `Check for Duplicates` and `Add Lead to Airtable` and re-pick your
-Base/Table so the nodes bind to your Airtable IDs rather than the original
-author's.
+**6. Run it.** Open the workflow and press **Run now**. Decide the leads in leadgate's dashboard (http://localhost:8080, **Queue**). After the last decision, a new execution shows up in n8n with the summary.
 
-**8. Run it**
-Click **Execute workflow**.
+## What n8n sends and gets back
 
-### Airtable schema required
+n8n sends:
 
-| Column | Type |
-|---|---|
-| company_id | Single line text |
-| name | Single line text |
-| profile_url | Single line text |
-| address | Single line text |
-| tagline | Single line text |
-| phone | Single line text |
-| established_year | Number (integer) |
-| years_with_us | Number (integer) |
-| rating | Number (1 decimal) |
-| review_count | Number (integer) |
-| source_url | Single line text |
-| scraped_at | Created time (Airtable auto-field — not written by n8n; see note below) |
-| Score | Number (integer) |
-| Dedup Status | Single select (`New`; duplicates are skipped, so only `New` is written) |
-| Needs Review | Checkbox |
-| Review Note | Single line text |
-| Date Added | Date |
-
-> **Note:** leadhound's own `scraped_at` value (when the lead was originally
-> scraped) is not currently carried through into Airtable. The `scraped_at`
-> column here is an Airtable "Created time" field that auto-stamps when the
-> record is inserted — it reflects when Switchyard ran, not when leadhound
-> scraped the row.
-
----
-
-## Output
-
-From leadhound's raw CSV:
-```
-phone: 977-1-4416941/43
-established_year: 2017
-years_with_us: +9
-verified: True
-rating: 5.0
+```json
+{
+  "niche": "dentist",
+  "location": "Austin, TX",
+  "callback_url": "http://n8n:5678/webhook/leadgate-results"
+}
 ```
 
-Lands in Airtable as:
+Instead of `niche` and `location`, it can send `campaign_id` to run a campaign you made in leadgate. A new campaign made this way uses OpenStreetMap, the `general-b2b` rubric, and up to 50 results. leadgate answers `202` with `run_id`, `campaign_id` and `status`.
 
-| Field | Value |
-|---|---|
-| phone | `+977-14416941` |
-| established_year | `2017` |
-| years_with_us | `9` |
-| Score | `4` (verified +2, rating ≥ 4 +1, has phone +1) |
-| Dedup Status | `New` |
-| Needs Review | unchecked |
-| Review Note | `alternate number: +977-14416943` |
+leadgate posts back `run_id`, `campaign_id`, `status`, the start and end times, the run's stats, and one line per lead: name, status, score, route and CRM record id. The route is `notify` (approved, in the CRM), `escalate` (approved, needs a second look) or `skip` (rejected). There are no phone numbers or emails in it; approved leads are in the CRM.
 
-The identity and contact fields, as they land after cleaning:
+## Using CSV leads
 
-![Airtable left columns — identity and contact fields](screenshots/airtable-left-columns.png)
+Send them to leadgate, not to Airtable. An admin can upload a CSV in leadgate's dashboard. Or the webhook can carry up to 500 leads in a `leads` field, and the run uses those instead of searching. That way every lead still goes through the approval queue.
 
-The computed fields — score, dedup status, and the review flag catching a
-row with an unrecognized phone format:
+## Project structure
 
-![Airtable right columns — score, dedup status, and review flag](screenshots/airtable-right-columns.png)
+```
+workflows/leadgate.json   the n8n workflow (same file as leadgate's n8n/leadgate.json)
+docker-compose.yml        n8n, on its own network and on leadnet
+LICENSE
+README.md
+```
 
----
+## Known limitations
 
-## Verifying Idempotency
+- **leadgate must be up first.** The compose file joins the `leadnet` network, which leadgate creates. Without it, `docker compose up` fails.
+- **The results webhook only listens while the workflow is published.** A run that finishes while it isn't gets its summary tried 3 times by leadgate, then dropped. The run itself is still saved in leadgate.
+- **A run can take days.** The summary only comes once a person has decided every lead.
+- **The same summary can arrive twice** if leadgate's worker dies right after posting it. Each summary carries its `run_id`, so you can tell.
+- **The schedule always searches the same thing.** The niche and location are fixed in **What to look for**; edit them there.
+- **It doesn't work with the live demo.** leadgate's public demo turns the webhook off.
+- **The n8n image isn't pinned.** `docker compose pull` gets the newest n8n.
 
-Running the workflow twice against the same CSV should create zero new
-records on the second pass. Tested against the full 142-row dataset:
+## Security
 
-**Run 1** — every lead is new, so all 142 items flow through the `false`
-(not-a-duplicate) branch into scoring and creation:
+- n8n and leadgate share one secret (`N8N_WEBHOOK_SECRET`). leadgate refuses runs without it, and n8n refuses results without it.
+- The secret lives in n8n's credential store and leadgate's `.env`, never in this repo.
+- n8n's port only listens on `localhost:5678`. Put n8n behind a proxy with HTTPS before you open it to the internet.
 
-![First run — all 142 leads flow through the false branch and get created](screenshots/run1-all-new.png)
+## License
 
-**Run 2** — same CSV, run again immediately after. Every lead now matches an
-existing `name` + `address` pair in Airtable, so all 142 items flow through
-the `true` (duplicate) branch straight back to the loop. `Score New Lead`
-and `Add Lead to Airtable` process zero items:
-
-![Second run — all 142 leads flow through the true branch and are skipped](screenshots/run2-all-duplicate.png)
-
----
-
-## leadgate workflow
-
-`workflows/leadgate.json` connects this n8n to
-[leadgate](https://github.com/maniesh-lab/leadgate), which finds and scores
-leads with agents and has a human approve each one. n8n only starts runs and
-receives results; leadgate itself writes approved leads to Airtable and posts
-to Discord.
-
-- **Run now** (or **Every Monday 09:00**, off by default) → **What to look
-  for** (niche, location, callback URL) → **Start a leadgate run** posts to
-  `http://leadgate-api:8000/api/webhooks/n8n/runs`
-- When the run is done (after a reviewer has decided every lead), leadgate
-  posts a summary to **Run results from leadgate**
-  (`/webhook/leadgate-results`) and **Summarize the run** counts what went
-  where
-
-**Setup**
-1. Start leadgate first (`docker compose up -d` in its repo). It creates the
-   `leadnet` Docker network this compose file joins. Without leadgate, run
-   `docker network create leadnet` once.
-2. `docker compose up -d` here.
-3. Create a **Header Auth** credential named `leadgate webhook secret`:
-   Name `X-Webhook-Secret`, Value = `N8N_WEBHOOK_SECRET` from leadgate's
-   `.env`. Both nodes use it: n8n sends it to leadgate, and checks it on the
-   results leadgate sends back.
-4. Import `workflows/leadgate.json`, pick that credential on both nodes if
-   n8n asks, then publish the workflow (the results webhook only listens
-   when it's published).
-
----
-
-## Tech Stack
-
-| Tool | Purpose |
-|---|---|
-| n8n | Workflow engine — parsing, cleaning, looping, branching |
-| Docker Compose | Self-hosted n8n instance |
-| Airtable | Destination store and dedup source of truth |
-| Airtable Personal Access Token | Auth between n8n and Airtable |
-
----
-
-## Use Case
-
-The middle stage of a lead-gen pipeline: takes leadhound's raw scraped CSV
-and turns it into a deduplicated, scored, CRM-ready Airtable table — ready
-for outreach or a follow-up automation, without manual copy-pasting or
-duplicate-checking.
-
----
-
-## Known Limitations
-
-- **No scheduling or webhook trigger (the CSV workflow).** Runs are started manually via
-  "Execute workflow"; not yet wired to fire automatically when leadhound
-  produces a new CSV.
-- **Duplicates are skipped, not refreshed.** If a lead's data changes
-  upstream (say, a new rating) but name and address stay the same, the
-  existing Airtable record is left untouched instead of updated. An
-  update-mode branch is a natural next step, not yet built.
-- **Dedup match is exact-string, not fuzzy.** A name or address differing
-  even by punctuation or spacing won't match and will insert as a second
-  record. This is a deliberate tradeoff — fuzzy matching risks false-positive
-  merges of two different businesses — but it means dedup can still be
-  defeated by inconsistent scraped formatting.
-- **The CSV file path is hardcoded** to a local disk path in both
-  `docker-compose.yml`'s volume mount and `Read Leads CSV From Disk`'s
-  `fileSelector` — not parameterized. Running this on a different machine
-  requires updating both.
-- **leadhound's own `scraped_at` timestamp isn't carried into Airtable.**
-  The `scraped_at` column in Airtable is auto-generated on record creation
-  instead — see the note under the schema table.
-- **Airtable rate limits shape the design.** Leads are processed one at a
-  time specifically to stay under Airtable's request limits, which makes
-  large batches slower than a bulk import would be.
-- **Credentials aren't portable.** The Airtable PAT lives in the local n8n
-  instance's credential store, not in this repo by design — importing the
-  workflow elsewhere requires re-adding the credential.
-
----
-
-## Legal / Ethical Notes
-
-- This workflow fetches nothing on its own — it operates entirely on
-  leadhound's already-scraped, `robots.txt`-respecting output
-- Airtable writes only ever add new records; nothing in this workflow
-  deletes or overwrites existing Airtable data
-
----
-
-## Author
-
-**Manish Pandeya** · [github.com/maniesh-lab](https://github.com/maniesh-lab)
+MIT. See [LICENSE](LICENSE).
